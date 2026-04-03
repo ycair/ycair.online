@@ -1,11 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  typescript: {
-    ignoreBuildErrors: true,
-  },
+  output: 'export', // 讓 Next.js 產生靜態檔案
   images: {
-    unoptimized: true,
+    unoptimized: true, // Tauri 環境不支援動態圖片優化
   },
-}
+};
 
-export default nextConfig
+export default nextConfig;

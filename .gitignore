@@ -1,0 +1,4 @@
+/.next/dev/cache
+/.next/dev/build/chunks
+/.next
+/node_modules
