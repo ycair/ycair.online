@@ -1,5 +1,4 @@
 use std::sync::{Arc, Mutex};
-use std::io::{BufRead, BufReader};
 use std::process::Command as StdCommand;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
@@ -31,6 +30,14 @@ struct AppState {
     signal_child: Arc<Mutex<Option<CommandChild>>>,
 }
 
+impl Drop for AppState {
+    fn drop(&mut self) {
+        kill_child(&self.core_child);
+        kill_child(&self.signal_child);
+        let _ = StdCommand::new("sudo").args(["pkill", "-f", "ycair-core"]).output();
+    }
+}
+
 fn parse_status_line(data: &[u8]) -> Option<CoreStatus> {
     let line = std::str::from_utf8(data).ok()?;
     let line = line.trim();
@@ -53,29 +60,17 @@ fn sidecar_path(name: &str) -> String {
         .parent()
         .unwrap()
         .to_path_buf();
-
-    #[cfg(target_os = "macos")]
+    let bundled = dir.join(name);
+    if bundled.exists() {
+        return bundled.to_str().unwrap_or("").to_string();
+    }
     let triple = if cfg!(target_arch = "aarch64") {
         "aarch64-apple-darwin"
     } else {
         "x86_64-apple-darwin"
     };
-    #[cfg(target_os = "linux")]
-    let triple = "x86_64-unknown-linux-gnu";
-    #[cfg(target_os = "windows")]
-    let triple = "x86_64-pc-windows-msvc";
-
-    let bundled_path = dir.join(name);
-    if bundled_path.exists() {
-        return bundled_path.to_str().unwrap_or("").to_string();
-    }
-
-    let dev_path = dir.join(format!("{}-{}", name, triple));
-    if dev_path.exists() {
-        return dev_path.to_str().unwrap_or("").to_string();
-    }
-
-    bundled_path.to_str().unwrap_or("").to_string()
+    dir.join(format!("{}-{}", name, triple))
+        .to_str().unwrap_or("").to_string()
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -85,9 +80,7 @@ fn spawn_stdout_reader(
 ) {
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("tokio runtime");
+            .enable_all().build().unwrap();
         rt.block_on(async move {
             while let Some(event) = rx.recv().await {
                 match event {
@@ -136,6 +129,54 @@ fn start_signaling_server(
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+fn start_core_macos(
+    room: &str,
+    pass: &str,
+    addr: &str,
+    status_ref: Arc<Mutex<Option<CoreStatus>>>,
+) -> Result<String, String> {
+    let core = sidecar_path("ycair-core");
+    let safe_room = room.replace('/', "_");
+    let logfile = format!("/tmp/ycair-core-{}.log", safe_room);
+
+    let _ = std::fs::remove_file(&logfile);
+
+    let room_owned = room.to_string();
+    let pass_owned = pass.to_string();
+    let addr_owned = addr.to_string();
+    let logfile_clone = logfile.clone();
+    let status_clone = status_ref.clone();
+
+    std::thread::spawn(move || {
+        let script = format!(
+            "do shell script \"exec '{}' '{}' '{}' '{}' > '{}' 2>> '{}'\" with administrator privileges",
+            core, room_owned, pass_owned, addr_owned, logfile_clone, logfile_clone,
+        );
+        let _ = StdCommand::new("osascript").arg("-e").arg(&script).output();
+        if let Ok(mut guard) = status_clone.lock() {
+            *guard = None;
+        }
+    });
+
+    for _ in 0..50 {
+        if let Ok(content) = std::fs::read_to_string(&logfile) {
+            for line in content.lines() {
+                if let Some(s) = parse_status_line(line.as_bytes()) {
+                    let ip = s.assigned_ip.clone();
+                    if let Ok(mut guard) = status_ref.lock() {
+                        *guard = Some(s);
+                    }
+                    return Ok(format!("Connected. VPN IP: {}", ip));
+                }
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+
+    Err("Go core did not produce status output within 10s".into())
+}
+
 #[cfg(not(target_os = "macos"))]
 fn start_core_direct(
     app_handle: &AppHandle,
@@ -159,69 +200,6 @@ fn start_core_direct(
 
     spawn_stdout_reader(rx, status_ref);
     Ok("Go core started".into())
-}
-
-#[cfg(target_os = "macos")]
-fn start_core_macos(
-    _app_handle: &AppHandle,
-    room: &str,
-    pass: &str,
-    addr: &str,
-    status_ref: Arc<Mutex<Option<CoreStatus>>>,
-    child_ref: Arc<Mutex<Option<CommandChild>>>,
-) -> Result<String, String> {
-    let core = sidecar_path("ycair-core");
-
-    let pw_output = StdCommand::new("osascript")
-        .arg("-e")
-        .arg("display dialog \"ycair needs administrator privileges to create the VPN adapter\" default answer \"\" with hidden answer with title \"ycair.online\" with icon caution")
-        .arg("-e")
-        .arg("text returned of result")
-        .output()
-        .map_err(|e| format!("osascript dialog failed: {}", e))?;
-
-    if !pw_output.status.success() {
-        return Err("Admin password dialog cancelled".into());
-    }
-    let password = String::from_utf8_lossy(&pw_output.stdout).trim().to_string();
-
-    // Run ycair-core via sudo
-    let mut child = StdCommand::new("sudo")
-        .arg("-S")
-        .arg(&core)
-        .args([room, pass, addr])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| format!("sudo spawn failed: {}", e))?;
-
-    use std::io::Write;
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(format!("{}\n", password).as_bytes());
-    }
-
-    let stdout = child.stdout.take()
-        .ok_or("no stdout from sudo process")?;
-
-    std::thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        for line_result in reader.lines() {
-            if let Ok(line) = line_result {
-                if let Some(s) = parse_status_line(line.as_bytes()) {
-                    if let Ok(mut guard) = status_ref.lock() {
-                        *guard = Some(s);
-                    }
-                }
-            }
-        }
-        if let Ok(mut guard) = status_ref.lock() {
-            *guard = None;
-        }
-        kill_child(&child_ref);
-    });
-
-    Ok("Go core started with admin privileges".into())
 }
 
 #[tauri::command]
@@ -255,7 +233,7 @@ async fn start_connection(
 
     #[cfg(target_os = "macos")]
     {
-        start_core_macos(&app_handle, &room, &pass, &addr, status_ref, core_child)
+        start_core_macos(&room, &pass, &addr, status_ref)
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -268,12 +246,9 @@ async fn start_connection(
 async fn stop_connection(state: State<'_, AppState>) -> Result<String, String> {
     kill_child(&state.core_child);
     kill_child(&state.signal_child);
+    let _ = StdCommand::new("sudo").args(["pkill", "-f", "ycair-core"]).output();
     if let Ok(mut guard) = state.status.lock() {
         *guard = None;
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let _ = StdCommand::new("pkill").arg("-f").arg("ycair-core").output();
     }
     Ok("Disconnected".into())
 }
