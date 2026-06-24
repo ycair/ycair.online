@@ -57,7 +57,7 @@ func Connect(serverAddr, room, password string, localEndpoints []string) (*Clien
 	scheme := "ws"
 	host := serverAddr
 
-	if u, err := url.Parse(serverAddr); err == nil && u.Scheme != "" {
+	if u, err := url.Parse(serverAddr); err == nil && u.Scheme != "" && u.Host != "" {
 		scheme = u.Scheme
 		host = u.Host
 		if u.Path != "" {
