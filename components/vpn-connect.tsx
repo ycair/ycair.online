@@ -7,9 +7,23 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
-import { Wifi, WifiOff, Loader2, Shield, Lock } from "lucide-react"
+import { Wifi, WifiOff, Loader2, Shield, Lock, Users } from "lucide-react"
 
 type ConnectionState = "disconnected" | "connecting" | "connected" | "error"
+
+interface StatusPeer {
+  id: string
+  ip: string
+}
+
+interface CoreStatus {
+  type: string
+  assigned_ip: string
+  peer_id: string
+  peers: StatusPeer[]
+  tun: string
+  connected: boolean
+}
 
 export function VPNConnect() {
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected")
@@ -18,7 +32,8 @@ export function VPNConnect() {
   const [progress, setProgress] = useState(0)
   const [errorMessage, setErrorMessage] = useState("")
   const [uptime, setUptime] = useState(0)
-  const [localIP] = useState("192.168.1.42")
+  const [vpnIP, setVpnIP] = useState("")
+  const [peerList, setPeerList] = useState<StatusPeer[]>([])
 
   const handleConnect = useCallback(async () => {
     if (!roomCode.trim()) {
@@ -81,6 +96,23 @@ export function VPNConnect() {
     }, 1000)
 
     return () => clearInterval(interval)
+  }, [connectionState])
+
+  useEffect(() => {
+    if (connectionState !== "connected") return
+
+    const poll = setInterval(async () => {
+      try {
+        const status = await invoke<CoreStatus | null>("get_status")
+        if (status) {
+          setVpnIP(status.assigned_ip)
+          setPeerList(status.peers)
+        }
+      } catch {
+      }
+    }, 2000)
+
+    return () => clearInterval(poll)
   }, [connectionState])
 
   const formatUptime = (seconds: number) => {
@@ -194,8 +226,10 @@ export function VPNConnect() {
           <CardContent className="pt-6">
             <div className="grid grid-cols-3 gap-4 text-center">
               <div className="space-y-1">
-                <p className="text-xs text-white/50 uppercase tracking-wider">Local IP</p>
-                <p className="font-mono text-sm text-white/90">{localIP}</p>
+                <p className="text-xs text-white/50 uppercase tracking-wider">VPN IP</p>
+                <p className="font-mono text-sm text-[oklch(0.72_0.19_145)]">
+                  {vpnIP || "--"}
+                </p>
               </div>
               <div className="space-y-1">
                 <p className="text-xs text-white/50 uppercase tracking-wider">Status</p>
@@ -215,6 +249,34 @@ export function VPNConnect() {
             </div>
           </CardContent>
         </Card>
+
+        {connectionState === "connected" && peerList.length > 0 && (
+          <Card className="w-full max-w-md bg-[oklch(0.16_0.005_260)]/80 backdrop-blur-xl border-white/10">
+            <CardContent className="pt-4 pb-3">
+              <div className="flex items-center gap-2 mb-3">
+                <Users className="size-3.5 text-white/50" />
+                <p className="text-xs text-white/50 uppercase tracking-wider">
+                  Peers ({peerList.length})
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                {peerList.map((peer) => (
+                  <div
+                    key={peer.id}
+                    className="flex items-center justify-between px-3 py-2 rounded-lg bg-white/5"
+                  >
+                    <span className="font-mono text-xs text-white/60 truncate max-w-[140px]">
+                      {peer.id}
+                    </span>
+                    <span className="font-mono text-xs text-[oklch(0.72_0.19_145)]">
+                      {peer.ip}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </main>
 
       <footer className="flex items-center justify-center py-4 border-t border-white/5">

@@ -1,26 +1,132 @@
-use tauri_plugin_shell::ShellExt; // 引入 Shell 擴展
+use std::sync::{Arc, Mutex};
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, State};
+use tauri_plugin_shell::ShellExt;
+use tauri_plugin_shell::process::CommandChild;
+use tauri_plugin_shell::process::CommandEvent;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StatusPeer {
+    id: String,
+    ip: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CoreStatus {
+    #[serde(rename = "type")]
+    msg_type: String,
+    assigned_ip: String,
+    peer_id: String,
+    peers: Vec<StatusPeer>,
+    tun: String,
+    connected: bool,
+}
+
+struct AppState {
+    status: Arc<Mutex<Option<CoreStatus>>>,
+    sidecar_child: Arc<Mutex<Option<CommandChild>>>,
+}
+
+fn parse_status_line(data: &[u8]) -> Option<CoreStatus> {
+    let line = std::str::from_utf8(data).ok()?;
+    let line = line.trim();
+    let json_str = line.strip_prefix("YCAR_STATUS:")?;
+    serde_json::from_str(json_str).ok()
+}
+
+fn spawn_status_reader(
+    mut rx: tauri::async_runtime::Receiver<CommandEvent>,
+    status: Arc<Mutex<Option<CoreStatus>>>,
+    child_ref: Arc<Mutex<Option<CommandChild>>>,
+) {
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+        rt.block_on(async move {
+            while let Some(event) = rx.recv().await {
+                match event {
+                    CommandEvent::Stdout(data) => {
+                        if let Some(s) = parse_status_line(&data) {
+                            if let Ok(mut guard) = status.lock() {
+                                *guard = Some(s);
+                            }
+                        }
+                    }
+                    CommandEvent::Terminated(_) => {
+                        if let Ok(mut guard) = status.lock() {
+                            *guard = None;
+                        }
+                        if let Ok(mut guard) = child_ref.lock() {
+                            *guard = None;
+                        }
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        });
+    });
+}
 
 #[tauri::command]
-async fn start_connection(app_handle: tauri::AppHandle, room: String, pass: String) -> Result<String, String> {
-    println!("Rust: 嘗試啟動 Go Sidecar... 房間: {}", room);
+async fn start_connection(
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+    room: String,
+    pass: String,
+) -> Result<String, String> {
+    let status = state.status.clone();
+    let child_ref = state.sidecar_child.clone();
+
+    if let Ok(mut guard) = child_ref.lock() {
+        let existing: Option<CommandChild> = guard.take();
+        if let Some(existing) = existing {
+            let _ = existing.kill();
+        }
+        *guard = None;
+    }
 
     let sidecar_command = app_handle
         .shell()
         .sidecar("ycair-core")
-        .map_err(|e| format!("Sidecar 初始化失敗: {}", e))?
+        .map_err(|e| format!("Sidecar init failed: {}", e))?
         .args([&room, &pass]);
 
-    // 啟動並檢查錯誤
-    match sidecar_command.spawn() {
-        Ok((mut _rx, _child)) => {
-            println!("Rust: Go Sidecar 成功啟動！");
-            Ok(format!("Go 核心已啟動"))
+    let (rx, child) = sidecar_command
+        .spawn()
+        .map_err(|e| format!("Go sidecar spawn failed: {}", e))?;
+
+    if let Ok(mut guard) = child_ref.lock() {
+        *guard = Some(child);
+    }
+
+    spawn_status_reader(rx, status, child_ref);
+
+    Ok("Go core started".into())
+}
+
+#[tauri::command]
+async fn stop_connection(state: State<'_, AppState>) -> Result<String, String> {
+    if let Ok(mut guard) = state.sidecar_child.lock() {
+        let existing: Option<CommandChild> = guard.take();
+        if let Some(existing) = existing {
+            let _ = existing.kill();
         }
-        Err(e) => {
-            let err_msg = format!("Go Sidecar 啟動崩潰: {}", e);
-            println!("{}", err_msg);
-            Err(err_msg)
-        }
+        *guard = None;
+    }
+    if let Ok(mut guard) = state.status.lock() {
+        *guard = None;
+    }
+    Ok("Disconnected".into())
+}
+
+#[tauri::command]
+async fn get_status(state: State<'_, AppState>) -> Result<Option<CoreStatus>, String> {
+    match state.status.lock() {
+        Ok(guard) => Ok(guard.clone()),
+        Err(_) => Err("Failed to read status".into()),
     }
 }
 
@@ -28,7 +134,11 @@ async fn start_connection(app_handle: tauri::AppHandle, room: String, pass: Stri
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![start_connection]) // 註冊指令
+        .manage(AppState {
+            status: Arc::new(Mutex::new(None)),
+            sidecar_child: Arc::new(Mutex::new(None)),
+        })
+        .invoke_handler(tauri::generate_handler![start_connection, stop_connection, get_status])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

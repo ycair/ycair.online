@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -14,6 +15,45 @@ import (
 	"ycair.online/core/signaling"
 	"ycair.online/core/tun"
 )
+
+type StatusPeer struct {
+	ID string `json:"id"`
+	IP string `json:"ip"`
+}
+
+type StatusMessage struct {
+	Type       string       `json:"type"`
+	AssignedIP string       `json:"assigned_ip"`
+	PeerID     string       `json:"peer_id"`
+	Peers      []StatusPeer `json:"peers"`
+	TUN        string       `json:"tun"`
+	Connected  bool         `json:"connected"`
+}
+
+func printStatus(connMgr *p2p.ConnectionManager, client *signaling.Client, tunIfce *tun.Interface) {
+	peers := connMgr.GetPeers()
+	peerList := make([]StatusPeer, 0, len(peers))
+	for _, p := range peers {
+		peerList = append(peerList, StatusPeer{ID: p.PeerID, IP: p.AssignedIP})
+	}
+
+	tunName := ""
+	if tunIfce != nil {
+		tunName = tunIfce.Name()
+	}
+
+	msg := StatusMessage{
+		Type:       "status",
+		AssignedIP: client.AssignedIP(),
+		PeerID:     client.PeerID(),
+		Peers:      peerList,
+		TUN:        tunName,
+		Connected:  true,
+	}
+
+	data, _ := json.Marshal(msg)
+	fmt.Fprintf(os.Stdout, "YCAR_STATUS:%s\n", string(data))
+}
 
 func main() {
 	if len(os.Args) < 3 {
@@ -54,6 +94,8 @@ func main() {
 	log.Printf("ycair-core: registered as %s, assigned IP %s",
 		client.PeerID(), client.AssignedIP())
 
+	printStatus(connMgr, client, nil)
+
 	connMgr.SetPeerID(client.PeerID())
 
 	tunIfce, err := tun.Create(client.AssignedIP())
@@ -67,6 +109,8 @@ func main() {
 		meshNet := mesh.New(tunIfce, connMgr)
 		meshNet.Start()
 	}
+
+	printStatus(connMgr, client, tunIfce)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -82,10 +126,12 @@ func main() {
 				log.Printf("Peer joined: id=%s ip=%s",
 					event.Peer.ID, event.Peer.IP)
 				connMgr.HandleSignalingEvent(event)
+				printStatus(connMgr, client, tunIfce)
 
 			case signaling.EventPeerLeft:
 				log.Printf("Peer left: id=%s", event.Peer.ID)
 				connMgr.HandleSignalingEvent(event)
+				printStatus(connMgr, client, tunIfce)
 
 			case signaling.EventError:
 				log.Printf("Signaling error: %s", event.Error)
@@ -99,6 +145,7 @@ func main() {
 			}
 			log.Printf("Status: %d peers, tun=%s, ip=%s",
 				len(peers), tunStatus, client.AssignedIP())
+			printStatus(connMgr, client, tunIfce)
 
 		case <-sig:
 			log.Println("ycair-core: shutting down...")

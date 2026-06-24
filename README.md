@@ -204,3 +204,56 @@ All three platform files export an identical `Interface` type and method set. Th
 - 加密協定：Noise NN + ChaChaPoly，完全跨平台 / encryption: fully cross-platform
 - 信令協議：JSON over WebSocket，完全跨平台 / signaling: fully cross-platform
 - IP 分配：由信令伺服器統一分配 `10.99.0.x`，與客戶端平台無關 / IP assignment: server-managed, platform-independent
+
+---
+
+## Minecraft 跨平台連線 / Minecraft Cross-Platform Play
+
+> macOS 與 Windows 玩家可透過 ycair 互聯，共同遊玩同一世界
+> macOS and Windows players can connect and play in the same world via ycair
+
+### 支援版本 / Supported Editions
+
+| 版本 / Edition | 傳輸協定 / Protocol | 預設埠 / Port | 跨平台 / Cross-Platform |
+|---|---|---|---|
+| Java Edition | TCP (6) | 25565 | ✅ macOS ↔ Windows |
+| Bedrock Edition | UDP (17) / RakNet | 19132 | ✅ macOS ↔ Windows |
+
+> ⚠️ Java Edition 與 Bedrock Edition **無法互聯**（不同遊戲引擎）。但相同版本的 macOS 與 Windows 玩家可以互聯。
+> Java and Bedrock editions are incompatible with each other. Same-edition macOS and Windows players can connect.
+
+### 技術原理 / How It Works
+
+```
+Minecraft TCP SYN → kernel → TUN (10.99.0.x)
+  → mesh.forwardLoop() → 加密 → UDP → peer
+  → mesh.receiveLoop() → 解密 → TUN → kernel → Minecraft
+```
+
+Mesh 層的 `extractDstIP()` 只檢查 IPv4 版本號，**不檢查協定欄位**。TCP 和 UDP 封包均透傳，無需修改程式碼。
+The mesh layer's `extractDstIP()` only checks the IPv4 version, **not the protocol field**. Both TCP and UDP packets pass through transparently.
+
+### 使用步驟 / Usage
+
+**主機端 / Host:**
+1. 啟動 ycair.online，建立或加入房間 / Start ycair, create or join a room
+2. 記下 UI 顯示的 **VPN IP**（例如 `10.99.0.2`）/ Note the **VPN IP** shown in the UI
+3. 開啟 Minecraft → Singleplayer → Open to LAN / Start game → Open to LAN
+4. 告知其他玩家你的 VPN IP / Share your VPN IP with other players
+
+**客戶端 / Client:**
+1. 啟動 ycair.online，加入**同一房間** / Start ycair, join the **same room**
+2. Java Edition: Multiplayer → Direct Connect → `10.99.0.2:25565`
+3. Bedrock Edition: Friends → Add Server → IP: `10.99.0.2`, Port: `19132`
+
+> Minecraft LAN Discovery (multicast `224.0.2.60`) 無法穿透 VPN，必須使用 Direct Connect 手動輸入 IP。
+> LAN Discovery (multicast) does not work over the VPN. Use Direct Connect with the VPN IP.
+
+### 驗證矩陣 / Verification Matrix
+
+| Host \ Client | macOS Java | Windows Java | macOS Bedrock | Windows Bedrock |
+|---|---|---|---|---|
+| macOS Java | ✅ | ✅ | ❌ | ❌ |
+| Windows Java | ✅ | ✅ | ❌ | ❌ |
+| macOS Bedrock | ❌ | ❌ | ✅ | ✅ |
+| Windows Bedrock | ❌ | ❌ | ✅ | ✅ |
