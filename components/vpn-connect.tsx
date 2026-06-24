@@ -112,7 +112,8 @@ export function VPNConnect() {
           setVpnIP(status.assigned_ip)
           setPeerList(status.peers)
         }
-      } catch {
+      } catch (err) {
+      console.error("get_status error:", err)
       }
     }, 2000)
 

@@ -192,7 +192,7 @@ fn start_core_macos(
         .args([room, pass, addr])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|e| format!("sudo spawn failed: {}", e))?;
 
