@@ -1,6 +1,5 @@
 use std::sync::{Arc, Mutex};
-use std::io::{BufRead, BufReader, Seek, SeekFrom};
-use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::process::Command as StdCommand;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
@@ -112,30 +111,6 @@ fn spawn_stdout_reader(
     });
 }
 
-fn spawn_logfile_reader(logfile: String, status: Arc<Mutex<Option<CoreStatus>>>) {
-    std::thread::spawn(move || {
-        let mut pos: u64 = 0;
-        loop {
-            if let Ok(mut file) = File::open(&logfile) {
-                let _ = file.seek(SeekFrom::Start(pos));
-                let reader = BufReader::new(file);
-                for line_result in reader.lines() {
-                    if let Ok(line) = line_result {
-                        let line_len = (line.len() + 1) as u64;
-                        if let Some(s) = parse_status_line(line.as_bytes()) {
-                            if let Ok(mut guard) = status.lock() {
-                                *guard = Some(s);
-                            }
-                        }
-                        pos += line_len;
-                    }
-                }
-            }
-            std::thread::sleep(std::time::Duration::from_secs(2));
-        }
-    });
-}
-
 fn start_signaling_server(
     app_handle: &AppHandle,
     child_ref: Arc<Mutex<Option<CommandChild>>>,
@@ -188,50 +163,65 @@ fn start_core_direct(
 
 #[cfg(target_os = "macos")]
 fn start_core_macos(
+    _app_handle: &AppHandle,
     room: &str,
     pass: &str,
     addr: &str,
     status_ref: Arc<Mutex<Option<CoreStatus>>>,
+    child_ref: Arc<Mutex<Option<CommandChild>>>,
 ) -> Result<String, String> {
     let core = sidecar_path("ycair-core");
-    let safe_room = room.replace('/', "_");
-    let logfile = format!("/tmp/ycair-core-{}.log", safe_room);
 
-    let script = format!(
-        "do shell script \"nohup '{}' '{}' '{}' '{}' > '{}' 2>&1 &\" with administrator privileges",
-        core, room, pass, addr, logfile,
-    );
-
-    let output = StdCommand::new("osascript")
+    let pw_output = StdCommand::new("osascript")
         .arg("-e")
-        .arg(&script)
+        .arg("display dialog \"ycair needs administrator privileges to create the VPN adapter\" default answer \"\" with hidden answer with title \"ycair.online\" with icon caution")
+        .arg("-e")
+        .arg("text returned of result")
         .output()
-        .map_err(|e| format!("osascript failed: {}", e))?;
+        .map_err(|e| format!("osascript dialog failed: {}", e))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Admin authorization cancelled or failed: {}", stderr.trim()));
+    if !pw_output.status.success() {
+        return Err("Admin password dialog cancelled".into());
+    }
+    let password = String::from_utf8_lossy(&pw_output.stdout).trim().to_string();
+
+    // Run ycair-core via sudo
+    let mut child = StdCommand::new("sudo")
+        .arg("-S")
+        .arg(&core)
+        .args([room, pass, addr])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("sudo spawn failed: {}", e))?;
+
+    use std::io::Write;
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(format!("{}\n", password).as_bytes());
     }
 
-    // Wait for initial status
-    for _ in 0..30 {
-        if let Ok(file) = File::open(&logfile) {
-            for line_result in BufReader::new(file).lines() {
-                if let Ok(line) = line_result {
-                    if let Some(s) = parse_status_line(line.as_bytes()) {
-                        if let Ok(mut guard) = status_ref.lock() {
-                            *guard = Some(s);
-                        }
-                        spawn_logfile_reader(logfile, status_ref);
-                        return Ok("Go core started with admin privileges".into());
+    let stdout = child.stdout.take()
+        .ok_or("no stdout from sudo process")?;
+
+    std::thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line_result in reader.lines() {
+            if let Ok(line) = line_result {
+                if let Some(s) = parse_status_line(line.as_bytes()) {
+                    if let Ok(mut guard) = status_ref.lock() {
+                        *guard = Some(s);
                     }
                 }
             }
         }
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
+        if let Ok(mut guard) = status_ref.lock() {
+            *guard = None;
+        }
+        kill_child(&child_ref);
+    });
 
-    Err("Go core did not produce status output (TUN may have failed)".into())
+    Ok("Go core started with admin privileges".into())
 }
 
 #[tauri::command]
@@ -265,7 +255,7 @@ async fn start_connection(
 
     #[cfg(target_os = "macos")]
     {
-        start_core_macos(&room, &pass, &addr, status_ref)
+        start_core_macos(&app_handle, &room, &pass, &addr, status_ref, core_child)
     }
 
     #[cfg(not(target_os = "macos"))]
