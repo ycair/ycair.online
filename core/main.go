@@ -2,28 +2,135 @@ package main
 
 import (
 	"fmt"
+	"log"
+	"net"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
+
+	"ycair.online/core/mesh"
+	"ycair.online/core/p2p"
+	"ycair.online/core/signaling"
+	"ycair.online/core/tun"
 )
 
 func main() {
 	if len(os.Args) < 3 {
-		fmt.Println("缺少參數: room_code password")
-		return
+		fmt.Println("usage: ycair-core <room_code> <password> [signaling_addr]")
+		os.Exit(1)
 	}
+
 	room := os.Args[1]
-	pass := os.Args[2]
+	password := os.Args[2]
 
-	fmt.Printf("Go 核心已啟動 - 正在為房間 %s (密碼: %s) 建立 P2P 隧道...\n", room, pass)
+	signalingAddr := "localhost:9090"
+	if len(os.Args) >= 4 {
+		signalingAddr = os.Args[3]
+	}
 
-	// 開啟一個後台任務定期印出心跳，防止死鎖
-	go func() {
-		for {
-			// 未來這裡可以檢查連線狀態
-			time.Sleep(30 * time.Second)
+	connMgr := p2p.NewConnectionManager(0)
+	if err := connMgr.Start(); err != nil {
+		log.Fatalf("NAT discovery failed: %v", err)
+	}
+	defer connMgr.Close()
+
+	localEndpoints := append(
+		discoverLocalEndpoints(connMgr.LocalPort()),
+		connMgr.PublicAddr(),
+	)
+
+	log.Printf("ycair-core: starting for room %q", room)
+	log.Printf("ycair-core: public endpoint %s", connMgr.PublicAddr())
+
+	client, err := signaling.Connect(signalingAddr, room, password, localEndpoints)
+	if err != nil {
+		log.Fatalf("Failed to connect to signaling server: %v", err)
+	}
+	defer client.Close()
+
+	client.WaitForWelcome()
+
+	log.Printf("ycair-core: registered as %s, assigned IP %s",
+		client.PeerID(), client.AssignedIP())
+
+	connMgr.SetPeerID(client.PeerID())
+
+	tunIfce, err := tun.Create(client.AssignedIP())
+	if err != nil {
+		log.Printf("TUN: failed to create interface: %v", err)
+		log.Println("TUN: running in signaling-only mode (no virtual network)")
+	} else {
+		defer tunIfce.Close()
+		log.Printf("TUN: interface %s created, IP %s", tunIfce.Name(), tunIfce.IP())
+
+		meshNet := mesh.New(tunIfce, connMgr)
+		meshNet.Start()
+	}
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+
+	statusTicker := time.NewTicker(10 * time.Second)
+	defer statusTicker.Stop()
+
+	for {
+		select {
+		case event := <-client.Events():
+			switch event.Type {
+			case signaling.EventPeerJoined:
+				log.Printf("Peer joined: id=%s ip=%s",
+					event.Peer.ID, event.Peer.IP)
+				connMgr.HandleSignalingEvent(event)
+
+			case signaling.EventPeerLeft:
+				log.Printf("Peer left: id=%s", event.Peer.ID)
+				connMgr.HandleSignalingEvent(event)
+
+			case signaling.EventError:
+				log.Printf("Signaling error: %s", event.Error)
+			}
+
+		case <-statusTicker.C:
+			peers := connMgr.GetPeers()
+			tunStatus := "no"
+			if tunIfce != nil {
+				tunStatus = tunIfce.Name()
+			}
+			log.Printf("Status: %d peers, tun=%s, ip=%s",
+				len(peers), tunStatus, client.AssignedIP())
+
+		case <-sig:
+			log.Println("ycair-core: shutting down...")
+			return
 		}
-	}()
+	}
+}
 
-	// 保持主程式不退出
-	select {}
+func discoverLocalEndpoints(port int) []string {
+	var endpoints []string
+
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return endpoints
+	}
+
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+			if ipNet, ok := addr.(*net.IPNet); ok && ipNet.IP.To4() != nil {
+				endpoints = append(endpoints, fmt.Sprintf("%s:%d", ipNet.IP, port))
+			}
+		}
+	}
+
+	return endpoints
 }

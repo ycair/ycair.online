@@ -1,0 +1,7 @@
+tunnel: ycair-signal
+credentials-file: /Users/ycair/.cloudflared/ycair-signal.json
+
+ingress:
+  - hostname: signal.ycair.online
+    service: ws://localhost:9090
+  - service: http_status:404

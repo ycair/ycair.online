@@ -1,4 +1,25 @@
-/.next/dev/cache
-/.next/dev/build/chunks
-/.next
+# Dependencies
 /node_modules
+
+# Next.js build output
+/.next
+/out
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Temporary / generated
+gemini-code-*.md
+vpn-connect-ui.zip
+bili_mac.dmg
+# Root-level stray images (not in public/ or icons/)
+/*.png
+/*.jpg
+
+# Tauri build (keep bin/ for sidecars)
+/src-tauri/target
