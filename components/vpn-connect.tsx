@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
-import { Wifi, WifiOff, Loader2, Shield, Lock, Users } from "lucide-react"
+import { Wifi, WifiOff, Loader2, Shield, Lock, Users, Home, LogIn } from "lucide-react"
 
 type ConnectionState = "disconnected" | "connecting" | "connected" | "error"
 
@@ -34,6 +34,8 @@ export function VPNConnect() {
   const [uptime, setUptime] = useState(0)
   const [vpnIP, setVpnIP] = useState("")
   const [peerList, setPeerList] = useState<StatusPeer[]>([])
+  const [mode, setMode] = useState<"host" | "join">("host")
+  const [signalingAddr, setSignalingAddr] = useState("")
 
   const handleConnect = useCallback(async () => {
     if (!roomCode.trim()) {
@@ -58,8 +60,10 @@ export function VPNConnect() {
 
     try {
       const msg = await invoke("start_connection", {
+        mode: mode,
         room: roomCode,
         pass: password,
+        signalingAddr: mode === "join" ? signalingAddr : null,
       })
       console.log("Backend response:", msg)
 
@@ -143,6 +147,33 @@ export function VPNConnect() {
         <Card className="w-full max-w-md bg-[oklch(0.16_0.005_260)]/80 backdrop-blur-xl border-white/10 shadow-xl">
           <CardContent className="pt-6 space-y-5">
             <div className="space-y-4">
+              <div className="flex gap-1 p-1 bg-white/5 rounded-lg">
+                <button
+                  onClick={() => setMode("host")}
+                  disabled={isInputDisabled}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-all ${
+                    mode === "host"
+                      ? "bg-[oklch(0.72_0.19_145)]/20 text-[oklch(0.72_0.19_145)]"
+                      : "text-white/40 hover:text-white/70"
+                  }`}
+                >
+                  <Home className="size-3.5" />
+                  Host
+                </button>
+                <button
+                  onClick={() => setMode("join")}
+                  disabled={isInputDisabled}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-all ${
+                    mode === "join"
+                      ? "bg-[oklch(0.72_0.19_145)]/20 text-[oklch(0.72_0.19_145)]"
+                      : "text-white/40 hover:text-white/70"
+                  }`}
+                >
+                  <LogIn className="size-3.5" />
+                  Join
+                </button>
+              </div>
+
               <div className="space-y-2">
                 <label className="text-xs font-medium text-white/60 uppercase tracking-wider flex items-center gap-2">
                   <Lock className="size-3" />
@@ -171,6 +202,22 @@ export function VPNConnect() {
                   className="bg-[oklch(0.10_0.005_260)] border-white/10 text-white placeholder:text-white/20 h-12 focus-visible:border-[oklch(0.72_0.19_145)] focus-visible:ring-[oklch(0.72_0.19_145)]/20"
                 />
               </div>
+
+              {mode === "join" && (
+                <div className="space-y-2">
+                  <label className="text-xs font-medium text-white/60 uppercase tracking-wider flex items-center gap-2">
+                    <Wifi className="size-3" />
+                    Signaling Server
+                  </label>
+                  <Input
+                    value={signalingAddr}
+                    onChange={(e) => setSignalingAddr(e.target.value)}
+                    placeholder="host-ip:9090"
+                    disabled={isInputDisabled}
+                    className="bg-[oklch(0.10_0.005_260)] border-white/10 text-white placeholder:text-white/20 h-10 focus-visible:border-[oklch(0.72_0.19_145)] focus-visible:ring-[oklch(0.72_0.19_145)]/20"
+                  />
+                </div>
+              )}
             </div>
 
             {connectionState === "connecting" && (
