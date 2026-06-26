@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"strings"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -54,8 +55,12 @@ type Client struct {
 }
 
 func Connect(serverAddr, room, password string, localEndpoints []string) (*Client, error) {
-	scheme := "ws"
+	scheme := "wss"
 	host := serverAddr
+
+	if strings.Contains(host, "localhost") || strings.Contains(host, "127.0.0.1") || strings.HasPrefix(host, "192.168.") || strings.HasPrefix(host, "10.") {
+		scheme = "ws"
+	}
 
 	if u, err := url.Parse(serverAddr); err == nil && u.Scheme != "" && u.Host != "" {
 		scheme = u.Scheme
