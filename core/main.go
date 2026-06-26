@@ -28,6 +28,7 @@ type StatusMessage struct {
 	Peers      []StatusPeer `json:"peers"`
 	TUN        string       `json:"tun"`
 	Connected  bool         `json:"connected"`
+	PublicIP   string       `json:"public_ip"`
 }
 
 func printStatus(connMgr *p2p.ConnectionManager, client *signaling.Client, tunIfce *tun.Interface) {
@@ -49,6 +50,7 @@ func printStatus(connMgr *p2p.ConnectionManager, client *signaling.Client, tunIf
 		Peers:      peerList,
 		TUN:        tunName,
 		Connected:  true,
+		PublicIP:   connMgr.PublicAddr(),
 	}
 
 	data, _ := json.Marshal(msg)
