@@ -1,0 +1,102 @@
+name: Windows Build (MSI)
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  GO_VERSION: "1.25"
+  NODE_VERSION: "22"
+
+jobs:
+  build:
+    name: Build Windows .msi + .exe installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go ${{ env.GO_VERSION }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Go Core (ycair-core)
+        working-directory: core
+        run: go build -o ../src-tauri/bin/ycair-core-x86_64-pc-windows-msvc.exe .
+
+      - name: Build Go Signaling Server
+        working-directory: signaling-server
+        run: go build -o ../src-tauri/bin/signaling-server.exe .
+
+      - name: Build Tauri (MSI + NSIS installer)
+        run: npm run tauri build
+
+      - name: Upload MSI installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ycair.online-windows-msi
+          path: src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+
+      - name: Upload NSIS installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ycair.online-windows-setup-exe
+          path: src-tauri/target/release/bundle/nsis/*setup.exe
+          if-no-files-found: error
+
+      - name: Upload Go Core CLI
+        uses: actions/upload-artifact@v4
+        with:
+          name: ycair-core-windows-cli
+          path: |
+            src-tauri/bin/ycair-core-x86_64-pc-windows-msvc.exe
+            src-tauri/bin/signaling-server.exe
+          if-no-files-found: error
+
+  release:
+    name: Attach to Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create Release ZIPs
+        run: |
+          cd ycair.online-windows-msi && zip -r ../ycair.online-windows-msi.zip . && cd ..
+          cd ycair.online-windows-setup-exe && zip -r ../ycair.online-windows-setup-exe.zip . && cd ..
+          cd ycair-core-windows-cli && zip -r ../ycair-core-windows-cli.zip . && cd ..
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ycair.online-windows-msi.zip
+            ycair.online-windows-setup-exe.zip
+            ycair-core-windows-cli.zip
