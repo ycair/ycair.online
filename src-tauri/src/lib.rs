@@ -28,7 +28,10 @@ struct AppState {
 impl Drop for AppState {
     fn drop(&mut self) {
         kill_child(&self.core_child);
+        #[cfg(target_os = "macos")]
         let _ = StdCommand::new("sudo").args(["pkill", "-f", "ycair-core"]).output();
+        #[cfg(target_os = "windows")]
+        let _ = StdCommand::new("taskkill").args(["/F", "/IM", "ycair-core-x86_64-pc-windows-msvc.exe"]).output();
     }
 }
 
@@ -50,7 +53,31 @@ fn sidecar_path(name: &str) -> String {
 
 #[cfg(not(target_os = "macos"))]
 fn spawn_stdout_reader(mut rx: tauri::async_runtime::Receiver<CommandEvent>, s: Arc<Mutex<Option<CoreStatus>>>) {
-    std::thread::spawn(move || { let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap(); rt.block_on(async { while let Some(CommandEvent::Stdout(d)) = rx.recv().await { if let Some(st) = parse_status_line(&d) { if let Ok(mut g) = s.lock() { *g = Some(st); } } } }); });
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let mut buf = Vec::new();
+        rt.block_on(async move {
+            while let Some(event) = rx.recv().await {
+                match event {
+                    CommandEvent::Stdout(data) => {
+                        buf.extend_from_slice(&data);
+                        while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+                            let line = buf[..pos].to_vec();
+                            buf.drain(..=pos);
+                            if let Some(st) = parse_status_line(&line) {
+                                if let Ok(mut g) = s.lock() { *g = Some(st); }
+                            }
+                        }
+                    }
+                    CommandEvent::Terminated(_) => {
+                        if let Ok(mut g) = s.lock() { *g = None; }
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+        });
+    });
 }
 
 #[cfg(target_os = "macos")]
@@ -81,7 +108,10 @@ async fn start_connection(app_handle: AppHandle, state: State<'_, AppState>, roo
 #[tauri::command]
 async fn stop_connection(state: State<'_, AppState>) -> Result<(), String> {
     kill_child(&state.core_child);
+    #[cfg(target_os = "macos")]
     let _ = StdCommand::new("sudo").args(["pkill","-f","ycair-core"]).output();
+    #[cfg(target_os = "windows")]
+    let _ = StdCommand::new("taskkill").args(["/F","/IM","ycair-core-x86_64-pc-windows-msvc.exe"]).output();
     if let Ok(mut g) = state.status.lock() { *g = None; } Ok(())
 }
 
