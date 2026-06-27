@@ -20,15 +20,16 @@ var upgrader = websocket.Upgrader{
 }
 
 type Message struct {
-	Type      string   `json:"type"`
-	Room      string   `json:"room,omitempty"`
-	PassHash  string   `json:"pass_hash,omitempty"`
-	Endpoints []string `json:"endpoints,omitempty"`
-	PeerID    string   `json:"peer_id,omitempty"`
-	Peer      *Peer    `json:"peer,omitempty"`
-	ID        string   `json:"id,omitempty"`
-	Error     string   `json:"error,omitempty"`
-	AssignedIP string  `json:"assigned_ip,omitempty"`
+	Type       string   `json:"type"`
+	Room       string   `json:"room,omitempty"`
+	PassHash   string   `json:"pass_hash,omitempty"`
+	Endpoints  []string `json:"endpoints,omitempty"`
+	PeerID     string   `json:"peer_id,omitempty"`
+	Peer       *Peer    `json:"peer,omitempty"`
+	ID         string   `json:"id,omitempty"`
+	Error      string   `json:"error,omitempty"`
+	AssignedIP string   `json:"assigned_ip,omitempty"`
+	Salt       string   `json:"salt,omitempty"`
 }
 
 type Peer struct {
@@ -48,6 +49,7 @@ type Client struct {
 
 type Room struct {
 	passHash string
+	salt     string
 	clients  map[string]*Client
 	nextIP   int
 }
@@ -102,6 +104,7 @@ func (s *Server) getOrCreateRoom(name, passHash string) *Room {
 
 	s.rooms[name] = &Room{
 		passHash: passHash,
+		salt:     generateSalt(),
 		clients:  make(map[string]*Client),
 		nextIP:   2,
 	}
@@ -216,6 +219,7 @@ func (s *Server) handleRegister(client *Client, msg Message) {
 		Type:       "welcome",
 		PeerID:     client.peerID,
 		AssignedIP: client.ip,
+		Salt:       room.salt,
 	})
 
 		if len(peers) > 0 {
@@ -320,6 +324,12 @@ func generatePeerID() string {
 func mustMarshal(msg Message) []byte {
 	data, _ := json.Marshal(msg)
 	return data
+}
+
+func generateSalt() string {
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 func main() {
