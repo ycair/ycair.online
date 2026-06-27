@@ -25,13 +25,24 @@ struct AppState {
     core_child: Arc<Mutex<Option<CommandChild>>>,
 }
 
+fn cleanup_core_processes() {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = StdCommand::new("sudo").args(["pkill", "ycair-core"]).output();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let _ = StdCommand::new("sudo").args(["pkill", "-9", "ycair-core"]).output();
+        let _ = StdCommand::new("sudo").args(["sh", "-c", "ifconfig -l | tr ' ' '\n' | grep utun | while read iface; do ifconfig $iface 2>/dev/null | grep -q '10.99.0' && ifconfig $iface destroy 2>/dev/null; done"]).output();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = StdCommand::new("taskkill").args(["/F", "/IM", "ycair-core-x86_64-pc-windows-msvc.exe"]).output();
+    }
+}
+
 impl Drop for AppState {
     fn drop(&mut self) {
         kill_child(&self.core_child);
-        #[cfg(target_os = "macos")]
-        let _ = StdCommand::new("sudo").args(["pkill", "-f", "ycair-core"]).output();
-        #[cfg(target_os = "windows")]
-        let _ = StdCommand::new("taskkill").args(["/F", "/IM", "ycair-core-x86_64-pc-windows-msvc.exe"]).output();
+        cleanup_core_processes();
     }
 }
 
@@ -108,10 +119,7 @@ async fn start_connection(app_handle: AppHandle, state: State<'_, AppState>, roo
 #[tauri::command]
 async fn stop_connection(state: State<'_, AppState>) -> Result<(), String> {
     kill_child(&state.core_child);
-    #[cfg(target_os = "macos")]
-    let _ = StdCommand::new("sudo").args(["pkill","-f","ycair-core"]).output();
-    #[cfg(target_os = "windows")]
-    let _ = StdCommand::new("taskkill").args(["/F","/IM","ycair-core-x86_64-pc-windows-msvc.exe"]).output();
+    cleanup_core_processes();
     if let Ok(mut g) = state.status.lock() { *g = None; } Ok(())
 }
 
