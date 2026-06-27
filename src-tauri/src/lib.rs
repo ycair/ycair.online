@@ -40,6 +40,7 @@ fn kill_child(o: &Mutex<Option<CommandChild>>) {
     if let Ok(mut g) = o.lock() { if let Some(c) = g.take() { let _ = c.kill(); } *g = None; }
 }
 
+#[cfg(target_os = "macos")]
 fn sidecar_path(name: &str) -> String {
     let dir = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
     if dir.join(name).exists() { return dir.join(name).to_str().unwrap_or("").into(); }
