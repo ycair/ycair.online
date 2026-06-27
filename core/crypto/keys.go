@@ -11,6 +11,8 @@ import (
 const (
 	pbkdf2Iterations = 100_000
 	keySeedLen       = 32
+
+	ServerPubKey = "VPpJutH4AhjLuQAti8eD8Ga7V++MhH49xFPtChCUVyQ="
 )
 
 func DeriveKeyPair(password, salt string) (pubKey string, privKey string, err error) {
@@ -18,4 +20,12 @@ func DeriveKeyPair(password, salt string) (pubKey string, privKey string, err er
 	priv := ed25519.NewKeyFromSeed(seed)
 	pub := priv.Public().(ed25519.PublicKey)
 	return hex.EncodeToString(pub), hex.EncodeToString(priv), nil
+}
+
+func CredentialHash(privKey, salt string) string {
+	privBytes, _ := hex.DecodeString(privKey)
+	h := sha256.New()
+	h.Write(privBytes)
+	h.Write([]byte(salt))
+	return hex.EncodeToString(h.Sum(nil))
 }
