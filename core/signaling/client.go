@@ -23,6 +23,7 @@ type Message struct {
 	ID         string   `json:"id,omitempty"`
 	Error      string   `json:"error,omitempty"`
 	AssignedIP string   `json:"assigned_ip,omitempty"`
+	Salt       string   `json:"salt,omitempty"`
 }
 
 type Peer struct {
@@ -49,6 +50,7 @@ type Client struct {
 	conn       *websocket.Conn
 	peerID     string
 	assignedIP string
+	salt       string
 	events     chan Event
 	done       chan struct{}
 	welcomeCh  chan struct{}
@@ -122,6 +124,7 @@ func (c *Client) readLoop() {
 			c.mu.Lock()
 			c.peerID = msg.PeerID
 			c.assignedIP = msg.AssignedIP
+			c.salt = msg.Salt
 			c.mu.Unlock()
 			close(c.welcomeCh)
 			log.Printf("Signaling: registered as %s, assigned IP %s", msg.PeerID, msg.AssignedIP)
@@ -150,6 +153,12 @@ func (c *Client) AssignedIP() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.assignedIP
+}
+
+func (c *Client) Salt() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.salt
 }
 
 func (c *Client) WaitForWelcome() {
