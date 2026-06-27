@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -31,6 +33,8 @@ type Message struct {
 	Error      string   `json:"error,omitempty"`
 	AssignedIP string   `json:"assigned_ip,omitempty"`
 	Salt       string   `json:"salt,omitempty"`
+	Token      string   `json:"token,omitempty"`
+	ServerPub  string   `json:"server_pub,omitempty"`
 }
 
 type Peer struct {
@@ -58,6 +62,8 @@ type Room struct {
 type Server struct {
 	rooms     map[string]*Room
 	rateLimit map[string][]time.Time
+	serverPri ed25519.PrivateKey
+	serverPub ed25519.PublicKey
 	mu        sync.RWMutex
 }
 
@@ -158,6 +164,13 @@ func (s *Server) broadcast(room *Room, msg Message, excludeID string) {
 	}
 }
 
+func (s *Server) signToken(room, pubKey string) string {
+	expiry := time.Now().Add(24 * time.Hour).Unix()
+	payload := fmt.Sprintf("%s:%s:%d", room, pubKey, expiry)
+	sig := ed25519.Sign(s.serverPri, []byte(payload))
+	return payload + ":" + base64.StdEncoding.EncodeToString(sig)
+}
+
 func (s *Server) handleSaltRequest(client *Client, msg Message) {
 	if len(msg.Room) == 0 || len(msg.Room) > maxRoomNameLen {
 		client.send <- mustMarshal(Message{Type: "error", Error: "invalid room code"})
@@ -235,11 +248,14 @@ func (s *Server) handleRegister(client *Client, msg Message) {
 		}
 	}
 
+	token := s.signToken(msg.Room, msg.PubKey)
 	client.send <- mustMarshal(Message{
 		Type:       "welcome",
 		PeerID:     client.peerID,
 		AssignedIP: client.ip,
 		Salt:       room.salt,
+		Token:      token,
+		ServerPub:  base64.StdEncoding.EncodeToString(s.serverPub),
 	})
 
 		if len(peers) > 0 {
@@ -358,10 +374,19 @@ func main() {
 	port := flag.Int("port", 9090, "signaling server port")
 	flag.Parse()
 
+	pub, pri, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		log.Fatalf("Failed to generate server key: %v", err)
+	}
+
 	server := &Server{
 		rooms:     make(map[string]*Room),
 		rateLimit: make(map[string][]time.Time),
+		serverPri: pri,
+		serverPub: pub,
 	}
+
+	log.Printf("Signaling server pubKey: %s", base64.StdEncoding.EncodeToString(pub))
 
 	http.HandleFunc("/ws", handleWebSocket(server))
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
