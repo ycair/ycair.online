@@ -1,6 +1,7 @@
 package signaling
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -87,7 +88,7 @@ func Connect(serverAddr, room, password string, localEndpoints []string) (*Clien
 		welcomeCh: make(chan struct{}),
 	}
 
-	passHash := hashPassword(password)
+	passHash := hashPassword(password, room)
 
 	registerMsg := Message{
 		Type:      "register",
@@ -164,7 +165,8 @@ func (c *Client) Close() {
 	<-c.done
 }
 
-func hashPassword(password string) string {
-	h := sha256.Sum256([]byte(password))
-	return hex.EncodeToString(h[:])
+func hashPassword(password, room string) string {
+	mac := hmac.New(sha256.New, []byte("ycair.online:"+room))
+	mac.Write([]byte(password))
+	return hex.EncodeToString(mac.Sum(nil))
 }
