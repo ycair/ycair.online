@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -54,13 +53,45 @@ type Room struct {
 }
 
 type Server struct {
-	rooms map[string]*Room
-	mu    sync.RWMutex
+	rooms     map[string]*Room
+	rateLimit map[string][]time.Time
+	mu        sync.RWMutex
+}
+
+const (
+	maxRoomNameLen  = 64
+	maxPassHashLen  = 128
+	maxRooms        = 1000
+	maxPeersPerRoom = 253
+	rateLimitWindow = 10 * time.Second
+	rateLimitMax    = 5
+)
+
+func (s *Server) checkRateLimit(ip string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	cutoff := now.Add(-rateLimitWindow)
+	attempts := s.rateLimit[ip]
+	recent := make([]time.Time, 0)
+	for _, t := range attempts {
+		if t.After(cutoff) {
+			recent = append(recent, t)
+		}
+	}
+	recent = append(recent, now)
+	s.rateLimit[ip] = recent
+	return len(recent) <= rateLimitMax
 }
 
 func (s *Server) getOrCreateRoom(name, passHash string) *Room {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if len(s.rooms) >= maxRooms {
+		return nil
+	}
 
 	if room, exists := s.rooms[name]; exists {
 		if room.passHash != passHash {
@@ -124,14 +155,29 @@ func (s *Server) broadcast(room *Room, msg Message, excludeID string) {
 }
 
 func (s *Server) handleRegister(client *Client, msg Message) {
-	if msg.Room == "" || msg.PassHash == "" {
-		client.send <- mustMarshal(Message{Type: "error", Error: "room and pass_hash required"})
+	if len(msg.Room) == 0 || len(msg.Room) > maxRoomNameLen {
+		client.send <- mustMarshal(Message{Type: "error", Error: "invalid room code"})
+		return
+	}
+	if len(msg.PassHash) == 0 || len(msg.PassHash) > maxPassHashLen {
+		client.send <- mustMarshal(Message{Type: "error", Error: "invalid credentials"})
+		return
+	}
+
+	ip, _, _ := net.SplitHostPort(client.conn.RemoteAddr().String())
+	if !s.checkRateLimit(ip) {
+		client.send <- mustMarshal(Message{Type: "error", Error: "too many attempts, try again later"})
 		return
 	}
 
 	room := s.getOrCreateRoom(msg.Room, msg.PassHash)
 	if room == nil {
-		client.send <- mustMarshal(Message{Type: "error", Error: "wrong password"})
+		client.send <- mustMarshal(Message{Type: "error", Error: "invalid room or password"})
+		return
+	}
+
+	if len(room.clients) >= maxPeersPerRoom {
+		client.send <- mustMarshal(Message{Type: "error", Error: "room is full"})
 		return
 	}
 
@@ -276,17 +322,13 @@ func mustMarshal(msg Message) []byte {
 	return data
 }
 
-func hashPassword(password string) string {
-	h := sha256.Sum256([]byte(password))
-	return hex.EncodeToString(h[:])
-}
-
 func main() {
 	port := flag.Int("port", 9090, "signaling server port")
 	flag.Parse()
 
 	server := &Server{
-		rooms: make(map[string]*Room),
+		rooms:     make(map[string]*Room),
+		rateLimit: make(map[string][]time.Time),
 	}
 
 	http.HandleFunc("/ws", handleWebSocket(server))
