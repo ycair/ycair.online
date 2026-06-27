@@ -23,6 +23,7 @@ type Message struct {
 	Type       string   `json:"type"`
 	Room       string   `json:"room,omitempty"`
 	PassHash   string   `json:"pass_hash,omitempty"`
+	PubKey     string   `json:"pub_key,omitempty"`
 	Endpoints  []string `json:"endpoints,omitempty"`
 	PeerID     string   `json:"peer_id,omitempty"`
 	Peer       *Peer    `json:"peer,omitempty"`
@@ -48,10 +49,10 @@ type Client struct {
 }
 
 type Room struct {
-	passHash string
-	salt     string
-	clients  map[string]*Client
-	nextIP   int
+	pubKey  string
+	salt    string
+	clients map[string]*Client
+	nextIP  int
 }
 
 type Server struct {
@@ -87,7 +88,7 @@ func (s *Server) checkRateLimit(ip string) bool {
 	return len(recent) <= rateLimitMax
 }
 
-func (s *Server) getOrCreateRoom(name, passHash string) *Room {
+func (s *Server) getOrCreateRoom(name, pubKey string) *Room {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -96,17 +97,17 @@ func (s *Server) getOrCreateRoom(name, passHash string) *Room {
 	}
 
 	if room, exists := s.rooms[name]; exists {
-		if room.passHash != passHash {
+		if room.pubKey != pubKey {
 			return nil
 		}
 		return room
 	}
 
 	s.rooms[name] = &Room{
-		passHash: passHash,
-		salt:     generateSalt(),
-		clients:  make(map[string]*Client),
-		nextIP:   2,
+		pubKey:  pubKey,
+		salt:    generateSalt(),
+		clients: make(map[string]*Client),
+		nextIP:  2,
 	}
 	return s.rooms[name]
 }
@@ -157,12 +158,31 @@ func (s *Server) broadcast(room *Room, msg Message, excludeID string) {
 	}
 }
 
+func (s *Server) handleSaltRequest(client *Client, msg Message) {
+	if len(msg.Room) == 0 || len(msg.Room) > maxRoomNameLen {
+		client.send <- mustMarshal(Message{Type: "error", Error: "invalid room code"})
+		return
+	}
+
+	s.mu.RLock()
+	room, exists := s.rooms[msg.Room]
+	s.mu.RUnlock()
+
+	if !exists {
+		salt := generateSalt()
+		client.send <- mustMarshal(Message{Type: "salt", Salt: salt})
+		return
+	}
+
+	client.send <- mustMarshal(Message{Type: "salt", Salt: room.salt})
+}
+
 func (s *Server) handleRegister(client *Client, msg Message) {
 	if len(msg.Room) == 0 || len(msg.Room) > maxRoomNameLen {
 		client.send <- mustMarshal(Message{Type: "error", Error: "invalid room code"})
 		return
 	}
-	if len(msg.PassHash) == 0 || len(msg.PassHash) > maxPassHashLen {
+	if len(msg.PubKey) == 0 {
 		client.send <- mustMarshal(Message{Type: "error", Error: "invalid credentials"})
 		return
 	}
@@ -173,7 +193,7 @@ func (s *Server) handleRegister(client *Client, msg Message) {
 		return
 	}
 
-	room := s.getOrCreateRoom(msg.Room, msg.PassHash)
+	room := s.getOrCreateRoom(msg.Room, msg.PubKey)
 	if room == nil {
 		client.send <- mustMarshal(Message{Type: "error", Error: "invalid room or password"})
 		return
@@ -278,6 +298,8 @@ func (c *Client) readPump(server *Server) {
 		}
 
 		switch msg.Type {
+		case "salt_request":
+			server.handleSaltRequest(c, msg)
 		case "register":
 			server.handleRegister(c, msg)
 		case "heartbeat":
