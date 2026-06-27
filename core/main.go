@@ -27,11 +27,12 @@ type StatusMessage struct {
 	PeerID     string       `json:"peer_id"`
 	Peers      []StatusPeer `json:"peers"`
 	TUN        string       `json:"tun"`
+	TunError   string       `json:"tun_error"`
 	Connected  bool         `json:"connected"`
 	PublicIP   string       `json:"public_ip"`
 }
 
-func printStatus(connMgr *p2p.ConnectionManager, client *signaling.Client, tunIfce *tun.Interface) {
+func printStatus(connMgr *p2p.ConnectionManager, client *signaling.Client, tunIfce *tun.Interface, tunErr string) {
 	peers := connMgr.GetPeers()
 	peerList := make([]StatusPeer, 0, len(peers))
 	for _, p := range peers {
@@ -49,6 +50,7 @@ func printStatus(connMgr *p2p.ConnectionManager, client *signaling.Client, tunIf
 		PeerID:     client.PeerID(),
 		Peers:      peerList,
 		TUN:        tunName,
+		TunError:   tunErr,
 		Connected:  true,
 		PublicIP:   connMgr.PublicAddr(),
 	}
@@ -96,14 +98,19 @@ func main() {
 	log.Printf("ycair-core: registered as %s, assigned IP %s",
 		client.PeerID(), client.AssignedIP())
 
-	printStatus(connMgr, client, nil)
+	printStatus(connMgr, client, nil, "")
 
 	connMgr.SetPeerID(client.PeerID())
 
-	tunIfce, err := tun.Create(client.AssignedIP())
-	if err != nil {
-		log.Printf("TUN: failed to create interface: %v", err)
+	var tunIfce *tun.Interface
+	var tunErrStr string
+	var meshNet *mesh.Mesh
+
+	tunIfce, tunErr := tun.Create(client.AssignedIP())
+	if tunErr != nil {
+		log.Printf("TUN: failed to create interface: %v", tunErr)
 		log.Println("TUN: running in signaling-only mode (no virtual network)")
+		tunErrStr = tunErr.Error()
 	} else {
 		defer tunIfce.Close()
 		log.Printf("TUN: interface %s created, IP %s", tunIfce.Name(), tunIfce.IP())
@@ -112,7 +119,7 @@ func main() {
 		meshNet.Start()
 	}
 
-	printStatus(connMgr, client, tunIfce)
+	printStatus(connMgr, client, tunIfce, tunErrStr)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -128,12 +135,12 @@ func main() {
 				log.Printf("Peer joined: id=%s ip=%s",
 					event.Peer.ID, event.Peer.IP)
 				connMgr.HandleSignalingEvent(event)
-				printStatus(connMgr, client, tunIfce)
+				printStatus(connMgr, client, tunIfce, tunErrStr)
 
 			case signaling.EventPeerLeft:
 				log.Printf("Peer left: id=%s", event.Peer.ID)
 				connMgr.HandleSignalingEvent(event)
-				printStatus(connMgr, client, tunIfce)
+				printStatus(connMgr, client, tunIfce, tunErrStr)
 
 			case signaling.EventError:
 				log.Printf("Signaling error: %s", event.Error)
@@ -147,7 +154,7 @@ func main() {
 			}
 			log.Printf("Status: %d peers, tun=%s, ip=%s",
 				len(peers), tunStatus, client.AssignedIP())
-			printStatus(connMgr, client, tunIfce)
+			printStatus(connMgr, client, tunIfce, tunErrStr)
 
 		case <-sig:
 			log.Println("ycair-core: shutting down...")
