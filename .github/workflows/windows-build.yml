@@ -47,7 +47,7 @@ jobs:
 
       - name: Build Go Signaling Server
         working-directory: signaling-server
-        run: go build -o ../src-tauri/bin/signaling-server.exe .
+        run: go build -o ../src-tauri/bin/signaling-server-x86_64-pc-windows-msvc.exe .
 
       - name: Build Tauri (MSI + NSIS installer)
         run: npm run tauri build
@@ -72,7 +72,7 @@ jobs:
           name: ycair-core-windows-cli
           path: |
             src-tauri/bin/ycair-core-x86_64-pc-windows-msvc.exe
-            src-tauri/bin/signaling-server.exe
+            src-tauri/bin/signaling-server-x86_64-pc-windows-msvc.exe
           if-no-files-found: error
 
   release:
