@@ -28,6 +28,9 @@
       "bin/ycair-core",
       "bin/signaling-server"
     ],
+    "resources": [
+      "bin/wintun.dll"
+    ],
     "active": true,
     "targets": "all",
     "icon": [
