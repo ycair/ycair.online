@@ -14,7 +14,7 @@ type ConnectionState = "disconnected" | "connecting" | "connected" | "error"
 interface StatusPeer { id: string; ip: string }
 interface CoreStatus {
   type: string; assigned_ip: string; peer_id: string
-  peers: StatusPeer[]; tun: string; connected: boolean; public_ip: string
+  peers: StatusPeer[]; tun: string; tun_error: string; connected: boolean; public_ip: string
 }
 
 export function VPNConnect() {
@@ -26,6 +26,7 @@ export function VPNConnect() {
   const [uptime, setUptime] = useState(0)
   const [vpnIP, setVpnIP] = useState("")
   const [tunName, setTunName] = useState("")
+  const [tunError, setTunError] = useState("")
   const [peerList, setPeerList] = useState<StatusPeer[]>([])
 
   const handleConnect = useCallback(async () => {
@@ -47,7 +48,7 @@ export function VPNConnect() {
   useEffect(() => {
     if (connectionState !== "connected") return
     const poll = setInterval(async () => {
-      try { const s = await invoke<CoreStatus | null>("get_status"); if (s) { setVpnIP(s.assigned_ip); setTunName(s.tun); setPeerList(s.peers) } } catch { /* ok */ }
+      try { const s = await invoke<CoreStatus | null>("get_status"); if (s) { setVpnIP(s.assigned_ip); setTunName(s.tun); setTunError(s.tun_error || ""); setPeerList(s.peers) } } catch { /* ok */ }
     }, 2000)
     return () => clearInterval(poll)
   }, [connectionState])
@@ -103,8 +104,9 @@ export function VPNConnect() {
                   <span className="size-1.5 rounded-full bg-green-400"/>Adapter: {tunName}
                 </div>
               ) : (
-                <div className="mt-3 pt-3 border-t border-white/5 flex items-center justify-center gap-2 text-xs text-yellow-400">
-                  <span className="size-1.5 rounded-full bg-yellow-400"/>VPN adapter not created — Run as Administrator
+                <div className="mt-3 pt-3 border-t border-white/5 text-xs text-yellow-400 text-center">
+                  <span className="size-1.5 rounded-full bg-yellow-400 inline-block mr-1"/>VPN adapter not created — Run as Administrator
+                  {tunError && <p className="mt-1 text-white/40 font-mono text-[10px] break-all">{tunError}</p>}
                 </div>
               )}
             </CardContent>
