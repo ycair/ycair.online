@@ -9,18 +9,28 @@
 
 | 平台 | 檔案 | 說明 |
 |------|------|------|
-| macOS | [ycair.online_0.1.0_aarch64.dmg](https://github.com/ycair/ycair.online/releases/latest) | 桌面應用 |
-| Windows | [ycair-core-x86_64-pc-windows-msvc.exe](https://github.com/ycair/ycair.online/releases/latest) | CLI（桌面應用需在 Windows 建置） |
+| macOS | [ycair.online_0.2.0_aarch64.dmg](https://github.com/ycair/ycair.online/releases/latest) | 桌面應用 |
+| Windows | [ycair.online-windows-msi.zip](https://github.com/ycair/ycair.online/releases/latest) | `.msi` 安裝包（推薦） |
+| Windows | [ycair.online-windows-setup-exe.zip](https://github.com/ycair/ycair.online/releases/latest) | `.exe` 安裝精靈（備用） |
 | Linux | [ycair-core-x86_64-unknown-linux-gnu](https://github.com/ycair/ycair.online/releases/latest) | CLI |
 
-## 🚀 使用方式（macOS 桌面應用）
+## 🚀 macOS
 
 ```
 1. 下載 .dmg → 拖入 Applications → 開啟
-2. 輸入 Room Code（例如 "mc-world"）
-3. 輸入 Password
-4. 點 Connect
-5. macOS 彈出管理員密碼 → 輸入允許
+2. 輸入 Room Code + Password → Connect
+3. macOS 彈出管理員密碼 → 輸入允許
+4. VPN IP 顯示 → 完成
+```
+
+## 🪟 Windows
+
+```
+1. 下載 ycair.online-windows-msi.zip → 解壓縮
+2. 雙擊 .msi 安裝（.msi 打不開就用 setup-exe.zip）
+3. 從開始選單開啟 ycair.online
+4. 輸入 Room Code + Password → Connect
+5. 首次會要求系統管理員權限（建立 Wintun 虛擬網卡）
 6. VPN IP 顯示 → 完成
 ```
 
@@ -42,14 +52,10 @@ VPN IP 在 app 的 UI 上直接顯示（例如 `10.99.0.2`）。
 | Java Edition | TCP | `10.99.0.2`（port 25565 預設） |
 | Bedrock Edition | UDP | `10.99.0.2:19132` |
 
-## 🖥 Windows / Linux CLI
+## 🖥 Linux CLI
 
 ```bash
-# macOS/Linux
 ./ycair-core-x86_64-unknown-linux-gnu <room> <password> signal.ycair.space
-
-# Windows (系統管理員執行)
-ycair-core-x86_64-pc-windows-msvc.exe <room> <password> signal.ycair.space
 ```
 
 ## 🏗 架構
