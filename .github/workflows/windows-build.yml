@@ -45,6 +45,13 @@ jobs:
         working-directory: core
         run: go build -o ../src-tauri/bin/ycair-core-x86_64-pc-windows-msvc.exe .
 
+      - name: Download Wintun DLL
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-0.14.1.zip" -OutFile "$env:TEMP\wintun.zip"
+          Expand-Archive -Path "$env:TEMP\wintun.zip" -DestinationPath "$env:TEMP\wintun"
+          Copy-Item "$env:TEMP\wintun\wintun\bin\amd64\wintun.dll" -Destination "src-tauri/bin/wintun.dll"
+
       - name: Build Go Signaling Server
         working-directory: signaling-server
         run: go build -o ../src-tauri/bin/signaling-server-x86_64-pc-windows-msvc.exe .
