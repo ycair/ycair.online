@@ -102,9 +102,7 @@ func main() {
 
 	connMgr.SetPeerID(client.PeerID())
 
-	var tunIfce *tun.Interface
 	var tunErrStr string
-	var meshNet *mesh.Mesh
 
 	tunIfce, tunErr := tun.Create(client.AssignedIP())
 	if tunErr != nil {
