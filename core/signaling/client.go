@@ -1,14 +1,13 @@
 package signaling
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"log"
 	"net/url"
 	"strings"
 	"sync"
+
+	"ycair.online/core/crypto"
 
 	"github.com/gorilla/websocket"
 )
@@ -17,6 +16,7 @@ type Message struct {
 	Type       string   `json:"type"`
 	Room       string   `json:"room,omitempty"`
 	PassHash   string   `json:"pass_hash,omitempty"`
+	PubKey     string   `json:"pub_key,omitempty"`
 	Endpoints  []string `json:"endpoints,omitempty"`
 	PeerID     string   `json:"peer_id,omitempty"`
 	Peer       *Peer    `json:"peer,omitempty"`
@@ -90,12 +90,32 @@ func Connect(serverAddr, room, password string, localEndpoints []string) (*Clien
 		welcomeCh: make(chan struct{}),
 	}
 
-	passHash := hashPassword(password, room)
+	if err := conn.WriteJSON(Message{Type: "salt_request", Room: room}); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("send salt request: %w", err)
+	}
+
+	var saltMsg Message
+	if err := conn.ReadJSON(&saltMsg); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("read salt response: %w", err)
+	}
+	if saltMsg.Type == "error" {
+		conn.Close()
+		return nil, fmt.Errorf("salt error: %s", saltMsg.Error)
+	}
+
+	salt := saltMsg.Salt
+	pubKey, _, err := crypto.DeriveKeyPair(password, salt)
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("derive key: %w", err)
+	}
 
 	registerMsg := Message{
 		Type:      "register",
 		Room:      room,
-		PassHash:  passHash,
+		PubKey:    pubKey,
 		Endpoints: localEndpoints,
 	}
 
@@ -172,10 +192,4 @@ func (c *Client) Events() <-chan Event {
 func (c *Client) Close() {
 	c.conn.Close()
 	<-c.done
-}
-
-func hashPassword(password, room string) string {
-	mac := hmac.New(sha256.New, []byte("ycair.online:"+room))
-	mac.Write([]byte(password))
-	return hex.EncodeToString(mac.Sum(nil))
 }
