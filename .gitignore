@@ -23,3 +23,6 @@ bili_mac.dmg
 
 # Tauri build (keep bin/ for sidecars)
 /src-tauri/target
+
+# Release artifacts (only on GitHub Releases)
+/release
