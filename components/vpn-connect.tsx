@@ -25,6 +25,7 @@ export function VPNConnect() {
   const [errorMessage, setErrorMessage] = useState("")
   const [uptime, setUptime] = useState(0)
   const [vpnIP, setVpnIP] = useState("")
+  const [tunName, setTunName] = useState("")
   const [peerList, setPeerList] = useState<StatusPeer[]>([])
 
   const handleConnect = useCallback(async () => {
@@ -46,7 +47,7 @@ export function VPNConnect() {
   useEffect(() => {
     if (connectionState !== "connected") return
     const poll = setInterval(async () => {
-      try { const s = await invoke<CoreStatus | null>("get_status"); if (s) { setVpnIP(s.assigned_ip); setPeerList(s.peers) } } catch { /* ok */ }
+      try { const s = await invoke<CoreStatus | null>("get_status"); if (s) { setVpnIP(s.assigned_ip); setTunName(s.tun); setPeerList(s.peers) } } catch { /* ok */ }
     }, 2000)
     return () => clearInterval(poll)
   }, [connectionState])
@@ -97,6 +98,15 @@ export function VPNConnect() {
                 <div className="space-y-1"><p className="text-xs text-white/50 uppercase">Status</p><div className="flex items-center justify-center gap-2"><StatusDot state={connectionState} size="sm"/><span className="text-sm text-white/90">connected</span></div></div>
                 <div className="space-y-1"><p className="text-xs text-white/50 uppercase">Uptime</p><p className="font-mono text-sm text-white/90">{formatUptime(uptime)}</p></div>
               </div>
+              {tunName ? (
+                <div className="mt-3 pt-3 border-t border-white/5 flex items-center justify-center gap-2 text-xs text-green-400">
+                  <span className="size-1.5 rounded-full bg-green-400"/>Adapter: {tunName}
+                </div>
+              ) : (
+                <div className="mt-3 pt-3 border-t border-white/5 flex items-center justify-center gap-2 text-xs text-yellow-400">
+                  <span className="size-1.5 rounded-full bg-yellow-400"/>VPN adapter not created — Run as Administrator
+                </div>
+              )}
             </CardContent>
           </Card>
         )}
